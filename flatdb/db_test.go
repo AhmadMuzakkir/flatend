@@ -1,6 +1,7 @@
 package flatdb
 
 import (
+	"context"
 	"database/sql"
 	"os"
 	"testing"
@@ -8,12 +9,12 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-func getDB(t *testing.T) (*sql.DB, func()) {
-	os.RemoveAll("./flatendsqlite.db")
+func getDB(t *testing.T, path string) (*sql.DB, func()) {
+	os.RemoveAll(path)
 
-	db, err := sql.Open("sqlite3", "flatendsqlite.db")
+	db, err := sql.Open("sqlite3", path)
 	if err != nil {
-		t.Fatal(err)
+		t.Error(err)
 	}
 
 	sqlStmt := `
@@ -21,48 +22,91 @@ func getDB(t *testing.T) (*sql.DB, func()) {
 	`
 	_, err = db.Exec(sqlStmt)
 	if err != nil {
-		t.Fatal(err)
+		t.Error(err)
 	}
 
-	_, err = db.Exec("insert into user(id, username, password) values(?, ?, ?)", "1", "alice", "alice-password")
+	_, err = db.Exec("insert into user(id, username, password) values(?, ?, ?)", 1, "alice", "alice-password")
 	if err != nil {
-		t.Fatal(err)
+		t.Error(err)
 	}
 
 	return db, func() {
-		os.RemoveAll("./flatendsqlite.db")
+		os.RemoveAll(path)
 	}
 }
 
 func TestSQL_Query(t *testing.T) {
-	db, cleanup := getDB(t)
+	db, cleanup := getDB(t, "./flatendsqlite_1.db")
 	defer cleanup()
 
 	s := SQL{
 		db: db,
 	}
 
-	// Test matches
+	ctx := context.Background()
 
-	params := map[string]string{"username": "alice"}
-	rows, err := s.Query("select * from user where username = :username", params)
+	// Test matches with string arg.
+
+	args := map[string]interface{}{"username": "alice"}
+	rows, err := s.Query(ctx, "select * from user where username = :username", args)
 	if err != nil {
-		t.Fatal(err)
+		t.Error(err)
 	}
 
 	if !rows.Next() {
-		t.Errorf("expected one row")
+		t.Error("expected one row")
 	}
 
-	// Test no matches
+	// Test matches with int arg.
 
-	params["username"] = "bob"
-	rows, err = s.Query("select * from user where username = :username", params)
+	args = map[string]interface{}{"id": 1}
+	rows, err = s.Query(ctx, "select * from user where id = :id", args)
 	if err != nil {
-		t.Fatal(err)
+		t.Error(err)
+	}
+
+	if !rows.Next() {
+		t.Error("expected one row")
+	}
+
+	// Test no matches.
+
+	args = map[string]interface{}{"username": "bob"}
+
+	rows, err = s.Query(ctx, "select * from user where username = :username", args)
+	if err != nil {
+		t.Error(err)
 	}
 
 	if rows.Next() {
-		t.Errorf("expected zero row")
+		t.Error("expected zero row")
+	}
+}
+
+func TestSQL_Insert(t *testing.T) {
+	db, cleanup := getDB(t, "./flatendsqlite_2.db")
+	defer cleanup()
+
+	s := SQL{
+		db: db,
+	}
+
+	ctx := context.Background()
+
+	args := map[string]interface{}{
+		"id":       47,
+		"username": "alice",
+		"password": "5004",
+	}
+
+	res, err := s.Exec(ctx, "insert into user(id, username, password) values(:id, :username, :password)", args)
+	if err != nil {
+		t.Error(err)
+	}
+
+	if n, err := res.RowsAffected(); err != nil {
+		t.Error(err)
+	} else if n != 1 {
+		t.Error("expected 1 row affected")
 	}
 }
